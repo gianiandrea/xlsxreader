@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -478,43 +478,89 @@ public class XlsxReader
     {
         List<Articoli> articolis = new List<Articoli>();
         int riga = -1;
+
         foreach (var row in rowsData)
         {
-            List<string> csvRow = new List<string>();
             riga++;
+//          Console.WriteLine("Riga: " + riga.ToString("D3") + ": " + string.Join(" | ", row));
 
-            Console.WriteLine("Inizio Riga " + riga.ToString("N0"));
-            Console.WriteLine("Riga: " + (riga).ToString("D3") + ": " + string.Join(" | ", row[riga]));
-
-            if (riga > 17) riga = 0;
-
-            articolis.Add(new Articoli
+            if (row.Count >= 18)
             {
-                CodificatoCt = row[0],
-                IdArticolo = row[1],
-                Fornitore = row[2],
-                SupplierCode = row[3],
-                Ean = row[4],
-                CodMatForn = row[5],
-                Descrizione = row[6],
-                Microcategory = row[7],
-                CodSubcategory = row[8],
-                Subcategory = row[9],
-                Taric = row[10],
-                Country = row[11],
-                Stato = row[12],
-                Brand = row[13],
-                Taglia = row[14],
-                Colore = row[15],
-                Gender = row[16],
-                CostoDiAcquisto = row[17]
-            });
+                articolis.Add(new Articoli
+                {
+                    CodificatoCt = row[0],
+                    IdArticolo = row[1],
+                    Fornitore = row[2],
+                    SupplierCode = row[3],
+                    Ean = row[4],
+                    CodMatForn = row[5],
+                    Descrizione = row[6],
+                    Microcategory = row[7],
+                    CodSubcategory = row[8],
+                    Subcategory = row[9],
+                    Taric = row[10],
+                    Country = row[11],
+                    Stato = row[12],
+                    Brand = row[13],
+                    Taglia = row[14],
+                    Colore = row[15],
+                    Gender = row[16],
+                    CostoDiAcquisto = row[17]
+                });
+            }
+            else
+            {
+                Console.WriteLine($"⚠️ Riga {riga} ha solo {row.Count} colonne. Skippata.");
+            }
         }
 
-        File.WriteAllText("models_out.txt", JsonSerializer.Serialize(articolis, new JsonSerializerOptions() { WriteIndented = true }));
-
-        Console.WriteLine("Fine Riga " + riga.ToString("N0"));
+        File.WriteAllText("models_out.txt", JsonSerializer.Serialize(articolis, new JsonSerializerOptions { WriteIndented = true }));
+//      Console.WriteLine("Fine esportazione. Totale articoli: " + articolis.Count);
     }
+
+    /*
+        private void ExportToModel(string outputFile)
+        {
+            List<Articoli> articolis = new List<Articoli>();
+            int riga = -1;
+            foreach (var row in rowsData)
+            {
+                List<string> csvRow = new List<string>();
+                riga++;
+
+                Console.WriteLine("Inizio Riga " + riga.ToString("N0"));
+                Console.WriteLine("Riga: " + (riga).ToString("D3") + ": " + string.Join(" | ", row[riga]));
+
+                if (riga > 17) riga = 0;
+
+                articolis.Add(new Articoli
+                {
+                    CodificatoCt = row[0],
+                    IdArticolo = row[1],
+                    Fornitore = row[2],
+                    SupplierCode = row[3],
+                    Ean = row[4],
+                    CodMatForn = row[5],
+                    Descrizione = row[6],
+                    Microcategory = row[7],
+                    CodSubcategory = row[8],
+                    Subcategory = row[9],
+                    Taric = row[10],
+                    Country = row[11],
+                    Stato = row[12],
+                    Brand = row[13],
+                    Taglia = row[14],
+                    Colore = row[15],
+                    Gender = row[16],
+                    CostoDiAcquisto = row[17]
+                });
+            }
+
+            File.WriteAllText("models_out.txt", JsonSerializer.Serialize(articolis, new JsonSerializerOptions() { WriteIndented = true }));
+
+            Console.WriteLine("Fine Riga " + riga.ToString("N0"));
+        }
+    */
     /*
         private void ExportToCsv(string outputFile)
         {
