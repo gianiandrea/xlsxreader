@@ -1,6 +1,6 @@
 //
 // XlsxReader
-// Andrea Giani / Marina Lacetera - v0.25
+// Andrea Giani / Marina Lacetera - v0.30
 //
 // # Sintassi
 // XlsxReader.exe data.xlsx json output.json true
@@ -10,13 +10,15 @@
 
 using System;
 using System.Collections.Generic;
-using System.Threading;
+using System.Data.SqlClient;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
 using System.Xml;
+using System.Data.Common;
 
 namespace XlsxReader
 {
@@ -73,6 +75,7 @@ namespace XlsxReader
                 Console.WriteLine("2. json - Esporta in formato JSON");
                 Console.WriteLine("3. csv - Esporta in formato CSV");
                 Console.WriteLine("4. txt - Esporta in formato testo");
+                Console.WriteLine("5. sql - Formato non supportato");
 
                 Console.Write("Selezionare il formato di output [console default]: ");
                 var formatInput = Console.ReadLine();
@@ -165,6 +168,12 @@ namespace XlsxReader
 
                     case "txt":
                         EsportaTxt(dati, outputPath, filePath, showHeaders);
+                        break;
+
+                    case "sql":
+         //             string connStr = "Server=localhost;Database=NomeDB;Trusted_Connection=True;";
+         //             bool hasHeaders = false;
+         //             EsportaSql(dati, connStr, "NomeTabella", hasHeaders);
                         break;
 
                     default:
@@ -605,6 +614,60 @@ namespace XlsxReader
             };
             doc.Load(reader);
             return doc;
+        }
+
+        static string GetParameterSyntax(string providerName, string paramName)
+        {
+            return providerName switch
+            {
+                "System.Data.SqlClient" => $"@{paramName}",
+                "Microsoft.Data.SqlClient" => $"@{paramName}",
+                "Oracle.ManagedDataAccess.Client" => $":{paramName}",
+                _ => $"@{paramName}" // default fallback
+            };
+        }
+
+        static void EsportaSql(List<List<string>> dati, string connectionString, string tableName, bool hasHeaders)
+        {
+            if (dati == null || dati.Count == 0)
+            {
+                Console.WriteLine("Nessun dato da inserire.");
+                return;
+            }
+
+            // "Oracle.ManagedDataAccess.Client"
+            string providerName = "System.Data.SqlClient";
+
+            var headers = hasHeaders ? dati[0] : Enumerable.Range(0, dati[0].Count).Select(i => $"Column_{i + 1}").ToList();
+            var rows = hasHeaders ? dati.Skip(1) : dati;
+
+            DbProviderFactory factory = DbProviderFactories.GetFactory(providerName); 
+            using DbConnection conn = factory.CreateConnection();
+            conn.ConnectionString = connectionString;
+            conn.Open();
+
+            foreach (var row in rows)
+            {
+                var columnNames = string.Join(", ", headers);
+                var paramNames = string.Join(", ", headers.Select((h, i) => GetParameterSyntax(providerName, $"p{i}")));
+
+                var query = $"INSERT INTO {tableName} ({columnNames}) VALUES ({paramNames})";
+
+                using DbCommand cmd = conn.CreateCommand();
+                cmd.CommandText = query;
+
+                for (int i = 0; i < headers.Count; i++)
+                {
+                    var param = cmd.CreateParameter();
+                    param.ParameterName = $"p{i}";
+                    param.Value = i < row.Count ? row[i] ?? (object)DBNull.Value : DBNull.Value;
+                    cmd.Parameters.Add(param);
+                }
+
+                cmd.ExecuteNonQuery();
+            }
+
+//          Console.WriteLine($"Inseriti {rows.Count} record nella tabella '{tableName}'.");
         }
     }
 }
