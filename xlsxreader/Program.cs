@@ -1,360 +1,610 @@
+//
+// XlsxReader
+// Andrea Giani / Marina Lacetera - v0.25
+//
+// # Sintassi
+// XlsxReader.exe data.xlsx json output.json true
+// XlsxReader.exe data.xlsx csv 
+// XlsxReader.exe data.xlsx console
+//
+
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
-using System.Text;
 using System.Text.Json;
-using System.Xml.Linq;
-using xlsxreader.Models;
+using System.Xml;
 
-public class XlsxReader
+namespace XlsxReader
 {
-    private Dictionary<int, string> sharedStrings = new Dictionary<int, string>();
-    private List<List<string>> rowsData = new List<List<string>>();
-    internal string? filePath;
-    internal string? sheetName;
-    private Stopwatch stopwatch = new Stopwatch();
-    static void Main(string[] args)
+    class Program
     {
-        string file = "articoli.xlsx";//args[0];
-        string sheet = "Articoli";//args.Length > 1 ? args[1] : "sheet1";
-        string format = "model";// args.Length > 2 ? args[2] : "console";
-        string output = "output.csv";//args.Length > 3 ? args[3] : "";
-
-        var reader = new XlsxReader();
-        reader.filePath = file;
-        reader.sheetName = sheet;
-        reader.ProcessFile(format, output);
-    }
-
-    public void ProcessFile(string exportFormat, string outputFile)
-    {
-        try
+        static void Main(string[] args)
         {
-            stopwatch.Start();
+			Stopwatch stopWatch = new Stopwatch();
+			Process processo = Process.GetCurrentProcess();
+            string processName = processo.ProcessName;
 
-            Console.WriteLine("=== XLSX Reader Report ===");
-            Console.WriteLine("File: " + Path.GetFileName(filePath));
-            Console.WriteLine("Full path: " + Path.GetFullPath(filePath));
-            Console.WriteLine("File size: " + new FileInfo(filePath).Length.ToString("N0") + " bytes");
-            Console.WriteLine("Sheet: " + sheetName);
-            Console.WriteLine("Started at: " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
-            Console.WriteLine();
+            Console.WriteLine("=======================================");
+            Console.WriteLine("Excel XLSX Reader - Versione XML Nativa");
+            Console.WriteLine("=======================================");
 
-            ReadXlsxFile();
+            string filePath = "";
+            string outputFormat = "";
+            string outputPath = "";
+            bool showHeaders = false;
 
-            stopwatch.Stop();
-
-            // Statistics
-            int totalRows = rowsData.Count;
-            int totalCells = 0;
-            foreach (var row in rowsData) totalCells += row.Count;
-            int maxColumns = 0;
-            foreach (var row in rowsData)
-                if (row.Count > maxColumns) maxColumns = row.Count;
-
-            Console.WriteLine("=== Statistics ===");
-            Console.WriteLine("Reading time: " + stopwatch.ElapsedMilliseconds + " ms");
-            Console.WriteLine("Total rows: " + totalRows.ToString("N0"));
-            Console.WriteLine("Maximum columns: " + maxColumns);
-            Console.WriteLine("Total cells: " + totalCells.ToString("N0"));
-            Console.WriteLine("Total cols: " + sheetName);
-            Console.WriteLine("Shared strings count: " + sharedStrings.Count.ToString("N0"));
-            Console.WriteLine();
-
-            // Export or display data
-            switch (exportFormat.ToLower())
+            // Gestione argomenti da linea di comando
+            if (args.Length > 0)
             {
-                case "model":
-            //      DisplayData();
+                filePath = args[0];
 
-                    ExportToModel(outputFile);
-                    break;
-                case "csv":
-                    ExportToCsv(outputFile);
-                    break;
-                case "txt":
-                    ExportToTxt(outputFile);
-                    break;
-                default:
-                    DisplayData();
-                    break;
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine("ERROR: " + ex.Message);
-            Environment.Exit(1);
-        }
-    }
+                if (args.Length > 1)
+                    outputFormat = args[1].ToLower();
 
-    private void ReadXlsxFile()
-    {
-        Console.WriteLine("Opening XLSX file...");
+                if (args.Length > 2)
+                    outputPath = args[2];
 
-        using (ZipArchive archive = ZipFile.OpenRead(filePath))
-        {
-            // Load shared strings
-            Console.WriteLine("Loading shared strings...");
-            LoadSharedStrings(archive);
-
-            Console.WriteLine("Resolving sheet path...");                                   //TEST
-            string sheetPath = GetSheetPath(archive, sheetName);                            //TEST
-            Console.WriteLine("Loading worksheet: " + sheetName + " (" + sheetPath + ")");  //TEST
-
-            // Load worksheet data
-            Console.WriteLine("Loading worksheet: " + sheetName + "...");
-            LoadWorksheetData(archive);
-        }
-    }
-    private string GetSheetPath(ZipArchive archive, string sheetName)
-    {
-        var workbookEntry = archive.GetEntry("xl/workbook.xml");
-        if (workbookEntry == null) throw new Exception("workbook.xml non trovato");
-
-        using (var reader = new StreamReader(workbookEntry.Open()))
-        {
-            var doc = XDocument.Load(reader);
-            var ns = doc.Root.Name.Namespace;
-
-            var sheets = doc.Descendants(ns + "sheet");
-            foreach (var sheet in sheets)
-            {
-                var nameAttr = sheet.Attribute("name");
-                var sheetIdAttr = sheet.Attribute("sheetId");
-                if (nameAttr != null && sheetIdAttr != null &&
-                    nameAttr.Value.Equals(sheetName, StringComparison.OrdinalIgnoreCase))
-                {
-                    string path = $"xl/worksheets/sheet{sheetIdAttr.Value}.xml";
-                    if (archive.GetEntry(path) != null)
-                        return path;
-                }
-            }
-        }
-
-        throw new Exception($"Foglio '{sheetName}' non trovato in workbook.xml");
-    }
-
-    private void LoadSharedStrings(ZipArchive archive)
-    {
-        var sharedEntry = archive.GetEntry("xl/sharedStrings.xml");
-        if (sharedEntry != null)
-        {
-            using (var reader = new StreamReader(sharedEntry.Open()))
-            {
-                var doc = XDocument.Load(reader);
-                var items = doc.Descendants().Where(e => e.Name.LocalName == "si");
-                int index = 0;
-                foreach (var item in items)
-                {
-                    var textParts = item.Descendants().Where(e => e.Name.LocalName == "t");
-                    sharedStrings[index++] = string.Join("", textParts.Select(t => t.Value));
-                }
-            }
-        }
-    }
-
-    private void LoadWorksheetData(ZipArchive archive)
-    {
-        // Try different sheet paths
-        string[] possiblePaths = {
-        "xl/worksheets/" + sheetName + ".xml",
-        "xl/worksheets/sheet" + sheetName + ".xml",
-        "xl/worksheets/sheet1.xml"
-    };
-
-        ZipArchiveEntry sheetEntry = null;
-        foreach (var path in possiblePaths)
-        {
-            sheetEntry = archive.GetEntry(path);
-            if (sheetEntry != null) break;
-        }
-
-        if (sheetEntry == null)
-        {
-            Console.WriteLine("Available sheets:");
-            foreach (var entry in archive.Entries)
-            {
-                if (entry.FullName.StartsWith("xl/worksheets/") && entry.FullName.EndsWith(".xml"))
-                {
-                    Console.WriteLine("  - " + entry.FullName);
-                }
-            }
-            throw new Exception("Sheet '" + sheetName + "' not found");
-        }
-
-        using (var reader = new StreamReader(sheetEntry.Open()))
-        {
-            var doc = XDocument.Load(reader);
-            var rows = doc.Descendants().Where(e => e.Name.LocalName == "row");
-
-            foreach (var row in rows)
-            {
-                List<string> rowValues = new List<string>();
-                var cells = row.Elements().Where(e => e.Name.LocalName == "c");
-
-                foreach (var cell in cells)
-                {
-                    string cellType = cell.Attribute("t") != null ? cell.Attribute("t").Value : null;
-                    var valueElement = cell.Elements().FirstOrDefault(e => e.Name.LocalName == "v");
-
-                    if (valueElement != null)
-                    {
-                        string rawValue = valueElement.Value;
-                        //                      Console.WriteLine($"Cell value: {rawValue} Type: {cellType} Row: " + rowc.ToString() + " Col: " + rowd.ToString()); // Log the cell value
-
-                        if (cellType == "s")
-                        {
-                            int sIndex;
-                            if (int.TryParse(rawValue, out sIndex) && sharedStrings.ContainsKey(sIndex))
-                            {
-                                rowValues.Add(sharedStrings[sIndex]);
-                            }
-                            else
-                            {
-                                rowValues.Add(rawValue);
-                            }
-                        }
-                        else
-                        {
-                            rowValues.Add(rawValue);
-                        }
-                    }
-                    else
-                    {
-                        //                      Console.WriteLine("Empty cell found " + rowc.ToString()); // Log empty cell
-                        rowValues.Add(""); // empty cell
-                    }
-                }
-
-                // Add every row, even if it contains empty cells
-                rowsData.Add(rowValues);
-            }
-        }
-    }
-    private void ExportToCsv(string outputFile)
-    {
-        if (string.IsNullOrEmpty(outputFile))
-        {
-            outputFile = Path.ChangeExtension(filePath, ".csv");
-        }
-
-        Console.WriteLine("Exporting to CSV: " + outputFile);
-
-        using (var writer = new StreamWriter(outputFile, false, Encoding.UTF8))
-        {
-            foreach (var row in rowsData)
-            {
-                List<string> csvRow = new List<string>();
-                foreach (var cell in row)
-                {
-                    if (cell.Contains(",") || cell.Contains("\"") || cell.Contains("\n"))
-                    {
-                        csvRow.Add("\"" + cell.Replace("\"", "\"\"") + "\"");
-                    }
-                    else
-                    {
-                        csvRow.Add(cell);
-                    }
-                }
-                writer.WriteLine(string.Join(",", csvRow));
-            }
-        }
-
-        Console.WriteLine("CSV export completed: " + new FileInfo(outputFile).Length.ToString("N0") + " bytes");
-    }
-
-    private void DisplayData()
-    {
-        Console.WriteLine("=== Data Preview (First 10 rows) ===");
-        int displayRows = Math.Min(10, rowsData.Count);
-        int maxColumns = rowsData.Max(r => r.Count);
-
-        for (int i = 0; i < displayRows; i++)
-        {
-            var row = rowsData[i];
-            List<string> displayCols = new List<string>();
-            for (int j = 0; j < Math.Min(maxColumns, row.Count); j++)
-            {
-                displayCols.Add(row[j]);
-            }
-            Console.WriteLine("Row " + (i + 1).ToString("D3") + ": " + string.Join(" | ", displayCols));
-
-            if (row.Count > 10)
-            {
-                Console.WriteLine("      ... and " + (row.Count - 10) + " more columns ...");
-            }
-        }
-
-        if (rowsData.Count > displayRows)
-        {
-            Console.WriteLine("... and " + (rowsData.Count - displayRows) + " more rows ...");
-        }
-    }
-
-    private void ExportToModel(string outputFile)
-    {
-        List<Articoli> articolis = new List<Articoli>();
-        int riga = -1;
-
-        foreach (var row in rowsData)
-        {
-            riga++;
-//          Console.WriteLine("Riga: " + riga.ToString("D3") + ": " + string.Join(" | ", row));
-
-            if (row.Count >= 18)
-            {
-                articolis.Add(new Articoli
-                {
-                    CodificatoCt = row[0] ?? "",
-                    IdArticolo = row[1] ?? "",
-                    Fornitore = row[2] ?? "",
-                    SupplierCode = row[3] ?? "",
-                    Ean = row[4] ?? "",
-                    CodMatForn = row[5] ?? "",
-                    Descrizione = row[6] ?? "",
-                    Microcategory = row[7] ?? "",
-                    CodSubcategory = row[8] ?? "",
-                    Subcategory = row[9] ?? "",
-                    Taric = row[10] ?? "",
-                    Country = row[11] ?? "",
-                    Stato = row[12] ?? "",
-                    Brand = row[13] ?? "",
-                    Taglia = row[14] ?? "",
-                    Colore = row[15] ?? "",
-                    Gender = row[16] ?? "",
-                    CostoDiAcquisto = row[17] ?? ""
-                });
+                if (args.Length > 3)
+                    showHeaders = args[3].ToLower() == "true" || args[3] == "1";
             }
             else
             {
-                Console.WriteLine($"! Riga {riga} ha solo {row.Count} colonne. Skippata.");
+                Console.Write("Nome del file di Input(XLSX) mancante: ");
+                filePath = Console.ReadLine();
+
+				if (filePath == "") {
+
+					string currentDirectory = Directory.GetCurrentDirectory();
+					string[] xlsxFiles = Directory.GetFiles(currentDirectory, "*.xlsx");
+
+					if (xlsxFiles.Length > 0)
+					{
+						filePath = xlsxFiles[0];
+						Console.WriteLine("Autoselezione file .xlsx trovato: " + filePath);
+					}
+				}
+
+                Console.WriteLine("\nFormati di output disponibili:");
+                Console.WriteLine("1. console - Visualizza nella console (default)");
+                Console.WriteLine("2. json - Esporta in formato JSON");
+                Console.WriteLine("3. csv - Esporta in formato CSV");
+                Console.WriteLine("4. txt - Esporta in formato testo");
+
+                Console.Write("Selezionare il formato di output [console default]: ");
+                var formatInput = Console.ReadLine();
+                outputFormat = string.IsNullOrWhiteSpace(formatInput) ? "console" : formatInput.ToLower();
+
+				if (outputFormat == "json" || outputFormat == "csv" || outputFormat == "txt") {
+					Console.Write("Percorso file di output (lascia vuoto per generare automaticamente): ");
+					outputPath = Console.ReadLine();
+				}
+
+                Console.Write("Includere la prima riga come intestazioni? (s/n) [n]: ");
+                var headerInput = Console.ReadLine();
+                showHeaders = headerInput?.ToLower() == "s" || headerInput?.ToLower() == "si";
             }
-        }
 
-        File.WriteAllText("models_out.txt", JsonSerializer.Serialize(articolis, new JsonSerializerOptions { WriteIndented = true }));
-//      Console.WriteLine("Fine esportazione. Totale articoli: " + articolis.Count);
-    }
-
-    private void ExportToTxt(string outputFile)
-    {
-        if (string.IsNullOrEmpty(outputFile))
-        {
-            outputFile = Path.ChangeExtension(filePath, ".txt");
-        }
-
-        Console.WriteLine("Exporting to TXT: " + outputFile);
-
-        using (var writer = new StreamWriter(outputFile, false, Encoding.UTF8))
-        {
-            foreach (var row in rowsData)
+            if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
             {
-                writer.WriteLine(string.Join("\t", row));
+         //     Console.WriteLine("File non trovato o percorso non valido!");
+                Console.WriteLine("\nXLSXReader\n");
+                Console.WriteLine("Sintassi: XlsxReader.exe <percorso_file> [formato_output] [percorso_output] [mostra_headers]");
+                Console.WriteLine("\nEsempi:");
+                Console.WriteLine("XlsxReader.exe data.xlsx json output.json true");
+                Console.WriteLine("XlsxReader.exe data.xlsx csv");
+                Console.WriteLine("XlsxReader.exe data.xlsx console\n");
+                Console.WriteLine("Premi un tasto per uscire...");
+                Console.ReadKey();
+                return;
+            }
+
+			stopWatch.Start();
+            TimeSpan startCpuTime = processo.TotalProcessorTime;
+            DateTime startTime = DateTime.Now;
+
+            try
+            {
+                // Leggi tutti i fogli disponibili
+                var fogli = GetFogliDisponibili(filePath);
+
+                if (fogli.Count == 0)
+                {
+                    Console.WriteLine("Nessun foglio trovato nel file Excel.");
+                    return;
+                }
+
+                Console.WriteLine($"\nFogli disponibili ({fogli.Count}):");
+                for (int i = 0; i < fogli.Count; i++)
+                {
+                    Console.WriteLine($"{i + 1}. {fogli[i].Nome}");
+                }
+
+                // Selezione foglio
+                int sceltaFoglio = 0;
+                if (fogli.Count > 1 && outputFormat == "console")
+                {
+                    Console.Write($"\nSeleziona il foglio da leggere (1-{fogli.Count}) [1]: ");
+                    var input = Console.ReadLine();
+                    if (!int.TryParse(input, out sceltaFoglio) || sceltaFoglio < 1 || sceltaFoglio > fogli.Count)
+                    {
+                        sceltaFoglio = 1;
+                    }
+                }
+                else
+                {
+                    sceltaFoglio = 1;
+                }
+
+                var foglioSelezionato = fogli[sceltaFoglio - 1];
+                Console.WriteLine($"\nLettura del foglio: {foglioSelezionato.Nome}");
+                Console.WriteLine(new string('=', 50));
+
+                // Leggi i dati del foglio
+                var dati = LeggiExcel(filePath, foglioSelezionato.Id);
+
+                if (dati.Count == 0)
+                {
+                    Console.WriteLine("Nessun dato trovato nel foglio selezionato.");
+                    return;
+                }
+
+                // Processa i dati in base al formato richiesto
+                switch (outputFormat)
+                {
+                    case "json":
+                        EsportaJson(dati, outputPath, filePath, showHeaders, foglioSelezionato.Nome);
+                        break;
+
+                    case "csv":
+                        EsportaCsv(dati, outputPath, filePath, showHeaders);
+                        break;
+
+                    case "txt":
+                        EsportaTxt(dati, outputPath, filePath, showHeaders);
+                        break;
+
+                    default:
+                        MostraConsole(dati, showHeaders);
+                        break;
+                }
+
+                Console.WriteLine($"\nReading completed.\n Total row: {dati.Count}");
+				Console.WriteLine("Full path: " + Path.GetFullPath(filePath));
+                Console.WriteLine("File size: " + new FileInfo(filePath).Length.ToString("N0") + " bytes");
+
+				stopWatch.Stop();
+
+				// Get the elapsed time as a TimeSpan value.
+				TimeSpan ts = stopWatch.Elapsed;
+                DateTime start_Time = DateTime.Now;
+
+                // Format and display the TimeSpan value.
+                string elapsedTime = String.Format("{0:00}:{1:00}:{2:00}.{3:00}",
+					ts.Hours, ts.Minutes, ts.Seconds,
+					ts.Milliseconds / 10);
+				Console.WriteLine("Time elapsed: " + elapsedTime);	
+				
+				// Display Memory
+				long memoriaPrivata = processo.PrivateMemorySize64;
+				long memoriaFisica = processo.WorkingSet64;
+				Console.WriteLine($"Private memory: {memoriaPrivata / 1024} KB");				//byte allocati esclusivamente dal processo
+				Console.WriteLine($"Physical memory (working set): {memoriaFisica / 1024} KB"); //quantità di memoria fisica attualmente usata
+
+                // CPU Usage
+                TimeSpan endCpuTime = processo.TotalProcessorTime;
+                DateTime endTime = DateTime.Now;
+
+                double cpuUsedMs = (endCpuTime - startCpuTime).TotalMilliseconds;
+                double totalMsPassed = (endTime - start_Time).TotalMilliseconds;
+
+                int processorCount = Environment.ProcessorCount;
+                double cpuUsageTotal = (cpuUsedMs / (totalMsPassed * processorCount)) * 100;
+
+                Console.WriteLine($"CPU used: {cpuUsageTotal:F2}%");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Errore durante la lettura del file: {ex.Message}");
+                Console.WriteLine($"Stack trace: {ex.StackTrace}");
+            }
+
+            Console.WriteLine("\nPremi un tasto per uscire...");
+            Console.ReadKey();
+        }
+
+        public class FoglioInfo
+        {
+            public string Nome { get; set; }
+            public string Id { get; set; }
+        }
+
+        static List<FoglioInfo> GetFogliDisponibili(string filePath)
+        {
+            var fogli = new List<FoglioInfo>();
+
+            using var archive = ZipFile.OpenRead(filePath);
+            var workbookEntry = archive.GetEntry("xl/workbook.xml");
+
+            if (workbookEntry != null)
+            {
+                using var workbookStream = workbookEntry.Open();
+                var workbookDoc = LoadXmlSafe(workbookStream);
+
+                var nsManager = new XmlNamespaceManager(workbookDoc.NameTable);
+                nsManager.AddNamespace("x", "http://schemas.openxmlformats.org/spreadsheetml/2006/main");
+
+                var sheets = workbookDoc.SelectNodes("//x:sheet", nsManager);
+                foreach (XmlNode sheet in sheets)
+                {
+                    var nome = sheet.Attributes?["name"]?.Value ?? "Senza nome";
+                    var sheetId = sheet.Attributes?["sheetId"]?.Value ?? "1";
+
+                    fogli.Add(new FoglioInfo
+                    {
+                        Nome = nome,
+                        Id = sheetId
+                    });
+                }
+            }
+
+            // Se non troviamo fogli nel workbook.xml, assumiamo che esista sheet1
+            if (fogli.Count == 0)
+            {
+                fogli.Add(new FoglioInfo { Nome = "Sheet1", Id = "1" });
+            }
+
+            return fogli;
+        }
+
+        static List<List<string>> LeggiExcel(string filePath, string sheetId = "1")
+        {
+            var risultato = new List<List<string>>();
+
+            using var archive = ZipFile.OpenRead(filePath);
+
+            // Carica le stringhe condivise
+            var sharedStrings = CaricaStringheCondivise(archive);
+
+            // Determina il percorso del foglio
+            var sheetPath = $"xl/worksheets/sheet{sheetId}.xml";
+            var sheetEntry = archive.GetEntry(sheetPath);
+
+            // Se il foglio specificato non esiste, prova con sheet1.xml
+            if (sheetEntry == null)
+            {
+                sheetPath = "xl/worksheets/sheet1.xml";
+                sheetEntry = archive.GetEntry(sheetPath);
+            }
+
+            if (sheetEntry == null)
+            {
+                throw new FileNotFoundException($"Foglio non trovato: sheet{sheetId}.xml");
+            }
+
+            // Lettura del foglio
+            using var sheetStream = sheetEntry.Open();
+            var sheetDoc = LoadXmlSafe(sheetStream);
+
+            var nsManager = new XmlNamespaceManager(sheetDoc.NameTable);
+            nsManager.AddNamespace("x", "http://schemas.openxmlformats.org/spreadsheetml/2006/main");
+
+            var rows = sheetDoc.SelectNodes("//x:row", nsManager);
+
+            foreach (XmlNode row in rows)
+            {
+                var riga = new List<string>();
+                var cells = row.SelectNodes("x:c", nsManager);
+
+                // Ottieni tutte le celle della riga
+                var celleOrdinate = new SortedDictionary<int, XmlNode>();
+
+                foreach (XmlNode cell in cells)
+                {
+                    var riferimento = cell.Attributes?["r"]?.Value;
+                    if (!string.IsNullOrEmpty(riferimento))
+                    {
+                        var colonnaIndex = GetColonnaIndex(riferimento);
+                        celleOrdinate[colonnaIndex] = cell;
+                    }
+                }
+
+                // Se non ci sono celle, aggiungi una riga vuota
+                if (celleOrdinate.Count == 0)
+                {
+                    risultato.Add(new List<string>());
+                    continue;
+                }
+
+                // Riempi la riga fino alla colonna massima
+                var maxColonna = celleOrdinate.Keys.Max();
+                for (int col = 0; col <= maxColonna; col++)
+                {
+                    if (celleOrdinate.ContainsKey(col))
+                    {
+                        var valore = EstraiValoreCella(celleOrdinate[col], sharedStrings);
+                        riga.Add(valore);
+                    }
+                    else
+                    {
+                        riga.Add(""); // Cella vuota
+                    }
+                }
+
+                risultato.Add(riga);
+            }
+
+            return risultato;
+        }
+
+        static List<string> CaricaStringheCondivise(ZipArchive archive)
+        {
+            var sharedStrings = new List<string>();
+            var sharedStringsEntry = archive.GetEntry("xl/sharedStrings.xml");
+
+            if (sharedStringsEntry != null)
+            {
+                using var sharedStream = sharedStringsEntry.Open();
+                var sharedDoc = LoadXmlSafe(sharedStream);
+
+                var nsManager = new XmlNamespaceManager(sharedDoc.NameTable);
+                nsManager.AddNamespace("x", "http://schemas.openxmlformats.org/spreadsheetml/2006/main");
+
+                var sis = sharedDoc.SelectNodes("//x:si", nsManager);
+                foreach (XmlNode si in sis)
+                {
+                    // Cerca sia <t> che <r><t> per testo formattato
+                    var tNode = si.SelectSingleNode("x:t", nsManager);
+                    if (tNode != null)
+                    {
+                        sharedStrings.Add(tNode.InnerText);
+                    }
+                    else
+                    {
+                        // Gestisci rich text (con formattazione)
+                        var rNodes = si.SelectNodes("x:r/x:t", nsManager);
+                        var richText = "";
+                        foreach (XmlNode rNode in rNodes)
+                        {
+                            richText += rNode.InnerText;
+                        }
+                        sharedStrings.Add(richText);
+                    }
+                }
+            }
+
+            return sharedStrings;
+        }
+
+        static string EstraiValoreCella(XmlNode cell, List<string> sharedStrings)
+        {
+            var tipo = cell.Attributes?["t"]?.Value;
+            var vNode = cell["v"];
+            var v = vNode?.InnerText;
+
+            if (string.IsNullOrEmpty(v))
+                return "";
+
+            switch (tipo)
+            {
+                case "s": // Stringa condivisa
+                    if (int.TryParse(v, out int idx) && idx < sharedStrings.Count)
+                        return sharedStrings[idx];
+                    return "";
+
+                case "str": // Stringa inline
+                    return v;
+
+                case "inlineStr": // Stringa inline (alternativa)
+                    var isNode = cell["is"];
+                    return isNode?.InnerText ?? v;
+
+                case "b": // Boolean
+                    return v == "1" ? "TRUE" : "FALSE";
+
+                case "d": // Data
+                    if (DateTime.TryParse(v, out DateTime data))
+                        return data.ToString("dd/MM/yyyy");
+                    return v;
+
+                case "e": // Errore
+                    return $"#ERROR: {v}";
+
+                default: // Numero o null
+                    return v;
             }
         }
 
-        Console.WriteLine("TXT export completed: " + new FileInfo(outputFile).Length.ToString("N0") + " bytes");
+        static int GetColonnaIndex(string riferimentoCella)
+        {
+            var colonnaLetters = "";
+            foreach (char c in riferimentoCella)
+            {
+                if (char.IsLetter(c))
+                    colonnaLetters += c;
+                else
+                    break;
+            }
+
+            int risultato = 0;
+            for (int i = 0; i < colonnaLetters.Length; i++)
+            {
+                risultato = risultato * 26 + (colonnaLetters[i] - 'A' + 1);
+            }
+
+            return risultato - 1; // Converti in base 0
+        }
+
+        static void MostraConsole(List<List<string>> dati, bool showHeaders)
+        {
+            Console.WriteLine($"Trovate {dati.Count} righe:");
+            Console.WriteLine();
+
+            for (int i = 0; i < dati.Count; i++)
+            {
+                if (i == 0 && showHeaders)
+                {
+                    Console.WriteLine($"HEADER: {string.Join(" | ", dati[i])}");
+                    Console.WriteLine(new string('-', 80));
+                }
+                else
+                {
+                    Console.WriteLine($"Riga {(showHeaders ? i : i + 1),3}: {string.Join(" | ", dati[i])}");
+                }
+            }
+        }
+ 
+        static void EsportaJson(List<List<string>> dati, string outputPath, string originalFilePath, bool hasHeaders, string sheetName)
+        {
+            if (string.IsNullOrWhiteSpace(outputPath))
+            {
+                var baseName = Path.GetFileNameWithoutExtension(originalFilePath);
+                outputPath = $"{baseName}_export.json";
+            }
+
+            object jsonData;
+
+            if (hasHeaders && dati.Count > 1)
+            {
+                var headers = dati[0];
+                var rows = dati.Skip(1).ToList();
+
+                var records = new List<Dictionary<string, string>>();
+                foreach (var row in rows)
+                {
+                    var record = new Dictionary<string, string>();
+                    for (int i = 0; i < headers.Count; i++)
+                    {
+                        var key = string.IsNullOrWhiteSpace(headers[i]) ? $"Column_{i + 1}" : headers[i];
+                        var value = i < row.Count ? row[i] : "";
+                        record[key] = value;
+                    }
+                    records.Add(record);
+                }
+
+                jsonData = new
+                {
+                    metadata = new
+                    {
+                        source_file = Path.GetFileName(originalFilePath),
+                        sheet_name = sheetName,
+                        total_rows = dati.Count,
+                        data_rows = rows.Count,
+                        has_headers = hasHeaders,
+                        export_date = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")
+                    },
+                    headers = headers,
+                    data = records
+                };
+            }
+            else
+            {
+                jsonData = new
+                {
+                    metadata = new
+                    {
+                        source_file = Path.GetFileName(originalFilePath),
+                        sheet_name = sheetName,
+                        total_rows = dati.Count,
+                        has_headers = hasHeaders,
+                        export_date = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")
+                    },
+                    data = dati
+                };
+            }
+
+            var options = new JsonSerializerOptions
+            {
+                WriteIndented = true,
+                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+            };
+
+            var jsonString = JsonSerializer.Serialize(jsonData, options);
+            File.WriteAllText(outputPath, jsonString);
+
+            Console.WriteLine($"Dati esportati in formato JSON: {outputPath}");
+            Console.WriteLine($"Dimensione file: {new FileInfo(outputPath).Length} bytes");
+        }
+
+        static void EsportaCsv(List<List<string>> dati, string outputPath, string originalFilePath, bool hasHeaders)
+        {
+            if (string.IsNullOrWhiteSpace(outputPath))
+            {
+                var baseName = Path.GetFileNameWithoutExtension(originalFilePath);
+                outputPath = $"{baseName}_export.csv";
+            }
+
+            using var writer = new StreamWriter(outputPath);
+
+            foreach (var riga in dati)
+            {
+                var csvLine = string.Join(",", riga.Select(cell =>
+                {
+                    if (cell.Contains(",") || cell.Contains("\"") || cell.Contains("\n"))
+                    {
+                        return $"\"{cell.Replace("\"", "\"\"")}\"";
+                    }
+                    return cell;
+                }));
+                writer.WriteLine(csvLine);
+            }
+
+            Console.WriteLine($"Dati esportati in formato CSV: {outputPath}");
+            Console.WriteLine($"Dimensione file: {new FileInfo(outputPath).Length} bytes");
+        }
+
+        static void EsportaTxt(List<List<string>> dati, string outputPath, string originalFilePath, bool hasHeaders)
+        {
+            if (string.IsNullOrWhiteSpace(outputPath))
+            {
+                var baseName = Path.GetFileNameWithoutExtension(originalFilePath);
+                outputPath = $"{baseName}_export.txt";
+            }
+
+            using var writer = new StreamWriter(outputPath);
+
+            writer.WriteLine($"Esportazione da: {Path.GetFileName(originalFilePath)}");
+            writer.WriteLine($"Data esportazione: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+            writer.WriteLine($"Totale righe: {dati.Count}");
+            writer.WriteLine(new string('=', 80));
+            writer.WriteLine();
+
+            for (int i = 0; i < dati.Count; i++)
+            {
+                if (i == 0 && hasHeaders)
+                {
+                    writer.WriteLine($"HEADER: {string.Join(" | ", dati[i])}");
+                    writer.WriteLine(new string('-', 80));
+                }
+                else
+                {
+                    writer.WriteLine($"Riga {(hasHeaders ? i : i + 1),3}: {string.Join(" | ", dati[i])}");
+                }
+            }
+
+            Console.WriteLine($"Dati esportati in formato TXT: {outputPath}");
+            Console.WriteLine($"Dimensione file: {new FileInfo(outputPath).Length} bytes");
+        }
+
+        // Metodo sicuro per caricare XML evitando XXE
+        static XmlDocument LoadXmlSafe(Stream stream)
+        {
+            var settings = new XmlReaderSettings
+            {
+                DtdProcessing = DtdProcessing.Prohibit,  // Niente DTD
+                XmlResolver = null                       // Nessun resolver esterno
+            };
+
+            using var reader = XmlReader.Create(stream, settings);
+            var doc = new XmlDocument
+            {
+                XmlResolver = null // Anche qui, niente resolver
+            };
+            doc.Load(reader);
+            return doc;
+        }
     }
 }
