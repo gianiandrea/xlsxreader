@@ -1,6 +1,6 @@
 //
 // XlsxReader
-// Andrea Giani / Marina Lacetera - v0.30
+// Andrea Giani / Marina Lacetera - v0.31
 //
 // # Sintassi
 // XlsxReader.exe data.xlsx json output.json true
@@ -189,7 +189,6 @@ namespace XlsxReader
 
 				// Get the elapsed time as a TimeSpan value.
 				TimeSpan ts = stopWatch.Elapsed;
-                DateTime start_Time = DateTime.Now;
 
                 // Format and display the TimeSpan value.
                 string elapsedTime = String.Format("{0:00}:{1:00}:{2:00}.{3:00}",
@@ -208,7 +207,7 @@ namespace XlsxReader
                 DateTime endTime = DateTime.Now;
 
                 double cpuUsedMs = (endCpuTime - startCpuTime).TotalMilliseconds;
-                double totalMsPassed = (endTime - start_Time).TotalMilliseconds;
+                double totalMsPassed = (endTime - startTime).TotalMilliseconds;
 
                 int processorCount = Environment.ProcessorCount;
                 double cpuUsageTotal = (cpuUsedMs / (totalMsPassed * processorCount)) * 100;
@@ -669,5 +668,6 @@ namespace XlsxReader
 
 //          Console.WriteLine($"Inseriti {rows.Count} record nella tabella '{tableName}'.");
         }
+		
     }
 }
